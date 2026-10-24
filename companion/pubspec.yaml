@@ -1,0 +1,42 @@
+name: lab_delivery_companion
+description: "Delivery Man companion app for the Laboratory Office Commission App."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  intl: ^0.20.3
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
+  geolocator: ^14.0.1
+  sqflite: ^2.4.2
+  shared_preferences: ^2.5.6
+  flutter_secure_storage: ^9.2.4
+  lab_commission_contract:
+    path: ../packages/lab_commission_contract
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher icon generator. Drop a square 1024x1024 PNG at assets/icon/app_icon.png,
+# then run: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/icon/app_icon.png
