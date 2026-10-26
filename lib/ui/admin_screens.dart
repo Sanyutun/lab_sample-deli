@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import '../core/app_services.dart';
 import '../data/models/models.dart';
 import '../data/repositories/settings_repository.dart';
+import '../data/repositories/user_repository.dart';
 import '../domain/dashboard_features.dart';
 import '../domain/exceptions.dart';
 import '../domain/services/reconciliation_service.dart';
@@ -1227,6 +1228,147 @@ class _UsersSectionState extends State<_UsersSection> {
     if (mounted) setState(() => _users = users);
   }
 
+  Future<void> _addStaff() async {
+    final form = await _showAddForm();
+    if (form == null || !mounted) return;
+    final approved = await askAdminPin(
+      context,
+      reason: 'Add ${form.name} as ${_roleName(form.role)}?',
+    );
+    if (!approved || !mounted) return;
+    final services = AppScope.of(context);
+    try {
+      final user = await services.users.create(
+        name: form.name,
+        pin: form.pin,
+        role: form.role,
+      );
+      await services.audit.record(
+        'USER_ADDED',
+        refId: user.id,
+        newValue: '${user.name} (${_roleName(user.role)})',
+      );
+      await _load();
+      if (mounted) {
+        showMessage(context, '${user.name} can now sign in with their own PIN');
+      }
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+  }
+
+  /// One dialog for a new account. Validation stays inside so a typo does not
+  /// throw away the name and PIN the admin just typed.
+  Future<_NewUserForm?> _showAddForm() async {
+    final nameC = TextEditingController();
+    final pinC = TextEditingController();
+    var role = UserRole.staff;
+    String? error;
+    return showDialog<_NewUserForm>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          void submit() {
+            final name = nameC.text.trim();
+            final pin = pinC.text.trim();
+            String? problem;
+            if (name.isEmpty) {
+              problem = 'Enter the staff member\'s name';
+            } else if (!UserRepository.isValidPin(pin)) {
+              problem = 'PIN must be 4 to 8 digits';
+            } else {
+              final clash = [
+                for (final u in _users)
+                  if (u.pin == pin) u,
+              ];
+              if (clash.isNotEmpty) {
+                problem = 'That PIN is already used by ${clash.first.name}';
+              }
+            }
+            if (problem != null) {
+              setDialogState(() => error = problem);
+              return;
+            }
+            Navigator.pop(ctx, _NewUserForm(name, pin, role));
+          }
+
+          return AlertDialog(
+            title: const Text('Add staff'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Give each person their own PIN. Work they record is then '
+                  'tracked against their name.',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameC,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Staff name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: pinC,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 8,
+                  decoration: const InputDecoration(
+                    labelText: 'Login PIN (4 to 8 digits)',
+                    counterText: '',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => submit(),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<UserRole>(
+                  initialValue: role,
+                  decoration: const InputDecoration(
+                    labelText: 'Role',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: UserRole.staff,
+                      child: Text('Staff'),
+                    ),
+                    DropdownMenuItem(
+                      value: UserRole.admin,
+                      child: Text('Admin'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setDialogState(() => role = v);
+                  },
+                ),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('ADD STAFF')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _editPin(User user) async {
     final controller = TextEditingController();
     final entered = await showDialog<String>(
@@ -1270,12 +1412,24 @@ class _UsersSectionState extends State<_UsersSection> {
     );
     if (entered == null || !mounted) return;
     final clean = entered.trim();
-    if (clean.length < 4 || clean.length > 8 || int.tryParse(clean) == null) {
+    if (!UserRepository.isValidPin(clean)) {
       showMessage(context, 'PIN must be 4 to 8 digits', error: true);
       return;
     }
     if (clean == user.pin) {
       showMessage(context, 'That is already the PIN for ${user.name}');
+      return;
+    }
+    final clash = [
+      for (final u in _users)
+        if (u.id != user.id && u.pin == clean) u,
+    ];
+    if (clash.isNotEmpty) {
+      showMessage(
+        context,
+        'That PIN is already used by ${clash.first.name}',
+        error: true,
+      );
       return;
     }
     final approved = await askAdminPin(
@@ -1284,23 +1438,96 @@ class _UsersSectionState extends State<_UsersSection> {
     );
     if (!approved || !mounted) return;
     final services = AppScope.of(context);
-    await services.users.update(user.copyWith(pin: clean));
-    await services.audit.record('USER_PIN_CHANGED', refId: user.id);
-    await _load();
-    if (mounted) showMessage(context, 'Login PIN changed for ${user.name}');
+    try {
+      await services.users.update(user.copyWith(pin: clean));
+      await services.audit.record('USER_PIN_CHANGED', refId: user.id);
+      await _load();
+      if (mounted) showMessage(context, 'Login PIN changed for ${user.name}');
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+  }
+
+  /// Deactivating keeps the account and its history but blocks sign-in. It must
+  /// not be possible to remove the last way into the app.
+  Future<void> _toggleActive(User user) async {
+    final activating = !user.active;
+    final services = AppScope.of(context);
+    if (!activating) {
+      if (user.id == services.auth.currentUser?.id) {
+        showMessage(
+          context,
+          'You cannot deactivate the account you are signed in with',
+          error: true,
+        );
+        return;
+      }
+      if (user.isAdmin &&
+          !_users.any((u) => u.isAdmin && u.active && u.id != user.id)) {
+        showMessage(
+          context,
+          'Add another active admin before deactivating this one',
+          error: true,
+        );
+        return;
+      }
+    }
+    final approved = await askAdminPin(
+      context,
+      reason: activating
+          ? 'Reactivate ${user.name} so they can sign in again?'
+          : 'Deactivate ${user.name}? They will no longer be able to sign in.',
+    );
+    if (!approved || !mounted) return;
+    try {
+      await services.users.update(user.copyWith(active: activating));
+      await services.audit.record(
+        activating ? 'USER_ACTIVATED' : 'USER_DEACTIVATED',
+        refId: user.id,
+        newValue: user.name,
+      );
+      await _load();
+      if (mounted) {
+        showMessage(
+          context,
+          activating
+              ? '${user.name} can sign in again'
+              : '${user.name} can no longer sign in',
+        );
+      }
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+  }
+
+  static String _roleName(UserRole role) =>
+      role == UserRole.admin ? 'Admin' : 'Staff';
+
+  static String _lastLogin(User user) {
+    final at = user.lastLoginAt;
+    if (at == null) return 'Never signed in';
+    return 'Last signed in ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.fromMillisecondsSinceEpoch(at))}';
   }
 
   @override
   Widget build(BuildContext context) {
     final stillDefault = _users.any((u) => u.isAdmin && u.pin == '1234');
+    final currentId = AppScope.of(context).auth.currentUser?.id;
+    final seenPins = <String>{};
+    var duplicatePin = false;
+    for (final u in _users) {
+      if (!seenPins.add(u.pin)) duplicatePin = true;
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SectionTitle('Users'),
+        const SectionTitle('Staff accounts'),
         Text(
-          'Sensitive actions (delete, take a payment back, correct) ask for the '
-          'Admin PIN, so staff never need a daily code or an email. Tap a user '
-          'to change their login PIN.',
+          'Each person signs in with their own PIN, so every commission and '
+          'audit entry is tracked against their name. Sensitive actions '
+          '(delete, take a payment back, correct) still ask for the Admin PIN. '
+          'Tap a user to change their login PIN; pause a user who has left to '
+          'stop them signing in while keeping their past work.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         if (stillDefault)
@@ -1311,12 +1538,30 @@ class _UsersSectionState extends State<_UsersSection> {
               style: TextStyle(color: Colors.red),
             ),
           ),
+        if (duplicatePin)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Two or more users share a login PIN, so their work cannot be '
+              'told apart. Change one of those PINs now.',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
         for (final u in _users)
           ListTile(
             dense: true,
-            leading: const Icon(Icons.person),
-            title: Text(u.name),
-            subtitle: Text('${u.role.name} · login PIN ${u.pin}'),
+            leading: Icon(Icons.person, color: u.active ? null : Colors.grey),
+            title: Text(
+              u.name,
+              style: u.active ? null : const TextStyle(color: Colors.grey),
+            ),
+            subtitle: Text(
+              '${_roleName(u.role)} · login PIN ${u.pin}\n'
+              '${_lastLogin(u)}'
+              '${u.id == currentId ? ' · signed in now' : ''}'
+              '${u.active ? '' : ' · INACTIVE'}',
+            ),
+            isThreeLine: true,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1326,13 +1571,37 @@ class _UsersSectionState extends State<_UsersSection> {
                   onPressed: () => _editPin(u),
                   icon: const Icon(Icons.key, size: 18),
                 ),
+                IconButton(
+                  tooltip: u.active ? 'Deactivate staff' : 'Reactivate staff',
+                  onPressed: () => _toggleActive(u),
+                  icon: Icon(
+                    u.active
+                        ? Icons.pause_circle_outline
+                        : Icons.play_circle_outline,
+                    size: 18,
+                  ),
+                ),
               ],
             ),
             onTap: () => _editPin(u),
           ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _addStaff,
+          icon: const Icon(Icons.person_add_alt_1, size: 18),
+          label: const Text('ADD STAFF'),
+        ),
       ],
     );
   }
+}
+
+class _NewUserForm {
+  const _NewUserForm(this.name, this.pin, this.role);
+
+  final String name;
+  final String pin;
+  final UserRole role;
 }
 
 class _ReconSettingsSection extends StatefulWidget {

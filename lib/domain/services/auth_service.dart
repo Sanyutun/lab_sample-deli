@@ -33,7 +33,16 @@ class AuthService {
   }
 
   Future<User> login(String pin) async {
-    final user = await _users.loginByPin(pin.trim());
+    var user = await _users.loginByPin(pin.trim());
+    try {
+      // Recorded on the account so Admin Settings can show who has been using
+      // the software. A failed write must not stop the sign-in itself.
+      final at = DateTime.now().millisecondsSinceEpoch;
+      await _users.markLogin(user.id, at);
+      user = user.copyWith(lastLoginAt: at);
+    } catch (_) {
+      // Keep the login working even if the timestamp could not be saved.
+    }
     _session = user;
     await _settings.set(_sessionKey, user.id);
     return user;

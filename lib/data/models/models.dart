@@ -10,6 +10,7 @@ class User {
     required this.role,
     this.active = true,
     this.email = '',
+    this.lastLoginAt,
   });
 
   final String id;
@@ -22,17 +23,29 @@ class User {
   /// asks for the Admin PIN instead, so this is only kept for backups.
   final String email;
 
+  /// When this staff member last signed in, ms since epoch. A restored session
+  /// keeps the time of the sign-in that created it. Null means never signed in
+  /// since the column was added.
+  final int? lastLoginAt;
+
   bool get isAdmin => role == UserRole.admin;
 
-  User copyWith({String? name, String? pin, String? email, bool? active}) =>
-      User(
-        id: id,
-        name: name ?? this.name,
-        pin: pin ?? this.pin,
-        role: role,
-        active: active ?? this.active,
-        email: email ?? this.email,
-      );
+  User copyWith({
+    String? name,
+    String? pin,
+    String? email,
+    bool? active,
+    int? lastLoginAt,
+    bool clearLastLogin = false,
+  }) => User(
+    id: id,
+    name: name ?? this.name,
+    pin: pin ?? this.pin,
+    role: role,
+    active: active ?? this.active,
+    email: email ?? this.email,
+    lastLoginAt: clearLastLogin ? null : (lastLoginAt ?? this.lastLoginAt),
+  );
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -41,6 +54,7 @@ class User {
     'role': role.name,
     'active': active ? 1 : 0,
     'email': email,
+    'last_login_at': lastLoginAt,
   };
 
   factory User.fromMap(Map<String, dynamic> m) => User(
@@ -50,6 +64,7 @@ class User {
     role: UserRole.values.firstWhere((r) => r.name == m['role']),
     active: (m['active'] as int? ?? 1) == 1,
     email: (m['email'] as String?) ?? '',
+    lastLoginAt: (m['last_login_at'] as num?)?.toInt(),
   );
 }
 

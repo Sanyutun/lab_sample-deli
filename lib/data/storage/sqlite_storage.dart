@@ -17,7 +17,7 @@ class SqliteStorage implements AppStorage {
     final path = dbPath ?? await _defaultDbPath();
     final db = await openDatabase(
       path,
-      version: 12,
+      version: 13,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
@@ -110,6 +110,9 @@ class SqliteStorage implements AppStorage {
         "ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''",
       );
       await _createDailyPins(db);
+    }
+    if (oldVersion < 13) {
+      await db.execute('ALTER TABLE users ADD COLUMN last_login_at INTEGER');
     }
   }
 
@@ -263,7 +266,8 @@ class SqliteStorage implements AppStorage {
         pin TEXT NOT NULL,
         role TEXT NOT NULL,
         active INTEGER NOT NULL DEFAULT 1,
-        email TEXT NOT NULL DEFAULT ''
+        email TEXT NOT NULL DEFAULT '',
+        last_login_at INTEGER
       )
     ''');
     await db.execute('''

@@ -30,6 +30,7 @@ const List<BackupTable> backupTables = [
     BackupColumn('role'),
     BackupColumn('active', BackupType.integer),
     BackupColumn('email'),
+    BackupColumn('last_login_at', BackupType.integer),
   ]),
   BackupTable('delivery_men', [
     BackupColumn('id'),

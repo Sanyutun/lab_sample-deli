@@ -44,6 +44,13 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final services = AppScope.of(context);
       final user = await services.auth.login(_pinController.text);
+      try {
+        // One audit row per sign-in, so Admin Settings can show who opened the
+        // app even before they record anything.
+        await services.audit.record('LOGIN', newValue: user.name);
+      } catch (_) {
+        // Never block a sign-in because the audit trail could not be written.
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
