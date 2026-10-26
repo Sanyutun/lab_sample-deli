@@ -65,10 +65,9 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
     });
     try {
       final services = AppScope.of(context);
-      final user = services.auth.requireUser();
-      final records = await services.commissions.all(
-        staffUserId: user.isAdmin ? null : user.id,
-      );
+      // History is shared: staff need to see deliveries entered by anyone,
+      // otherwise a fresh staff login looks as if nothing was ever recorded.
+      final records = await services.commissions.all();
       // One request for all men; per-record lookups are very slow over the
       // office server compared with the local database.
       final men = await services.deliveryMen.all();
@@ -333,7 +332,7 @@ class _CommissionHistoryScreenState extends State<CommissionHistoryScreen> {
       builder: (ctx) => _CorrectDialog(record: record, men: options),
     );
     if (result == null) return;
-    if (!await askDailyPin(
+    if (!await askAdminPin(
       context,
       reason: 'Correct transaction ${record.barcode}?',
     )) {
@@ -371,7 +370,7 @@ class _CommissionHistoryScreenState extends State<CommissionHistoryScreen> {
   Future<void> _delete(CommissionRecord record) async {
     final reason = await deleteReasonDialog(context);
     if (reason == null) return;
-    if (!await askDailyPin(
+    if (!await askAdminPin(
       context,
       reason: 'Delete transaction ${record.barcode}?',
     )) {

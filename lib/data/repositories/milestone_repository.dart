@@ -20,11 +20,14 @@ class MilestoneRepository {
   Future<MilestoneRule> addRule({
     required int everyN,
     required int rewardAmount,
+    bool active = true,
   }) async {
+    await _validateRule(everyN: everyN, rewardAmount: rewardAmount);
     final rule = MilestoneRule(
       id: newId('mrule'),
       everyN: everyN,
       rewardAmount: rewardAmount,
+      active: active,
     );
     await _storage.insert(rulesTable, rule.toMap());
     return rule;
@@ -38,15 +41,36 @@ class MilestoneRepository {
 
   /// Rejects a rule the reward engine cannot use: it computes
   /// `deliveryCount % everyN`, so the count must be positive, and a reward is
-  /// money, so the amount must be too.
+  /// money, so the amount must be too. Two rules with the same count would also
+  /// create the same reward twice, so each count is allowed only once.
   Future<void> updateRule(MilestoneRule rule) async {
-    if (rule.everyN < 1) {
+    await _validateRule(
+      everyN: rule.everyN,
+      rewardAmount: rule.rewardAmount,
+      ignoreId: rule.id,
+    );
+    await _storage.update(rulesTable, {'id': rule.id}, rule.toMap());
+  }
+
+  Future<void> _validateRule({
+    required int everyN,
+    required int rewardAmount,
+    String? ignoreId,
+  }) async {
+    if (everyN < 1) {
       throw const ValidationException('Every N deliveries must be 1 or more');
     }
-    if (rule.rewardAmount < 1) {
+    if (rewardAmount < 1) {
       throw const ValidationException('Reward amount must be 1 MMK or more');
     }
-    await _storage.update(rulesTable, {'id': rule.id}, rule.toMap());
+    for (final other in await rules()) {
+      if (other.id == ignoreId) continue;
+      if (other.everyN == everyN) {
+        throw ValidationException(
+          'A rule for every $everyN deliveries already exists',
+        );
+      }
+    }
   }
 
   Future<bool> rewardExists(

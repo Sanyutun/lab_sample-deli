@@ -46,10 +46,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) setState(() => _settings = all);
   }
 
-  /// Admin Settings toggles these; a missing key means shown.
-  bool _visible(DashboardFeature feature, {required bool admin}) =>
-      feature.alwaysVisible ||
-      _settings[feature.visibilityKey(admin: admin)] != '0';
+  /// Admin Settings toggles these. A missing key means shown, except buttons
+  /// that are admin-only by default: those stay hidden from staff until an
+  /// admin ticks their Staff box.
+  bool _visible(DashboardFeature feature, {required bool admin}) {
+    if (feature.alwaysVisible) return admin;
+    final value = _settings[feature.visibilityKey(admin: admin)];
+    if (value == null) return admin || !feature.adminOnly;
+    return value != '0';
+  }
 
   Future<void> _open(Widget screen) async {
     await Navigator.push(
@@ -108,8 +113,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         : DashboardFeature.scanReceipt;
     final items = [
       for (final feature in DashboardFeature.values)
-        if ((!feature.adminOnly || widget.isAdmin) &&
-            (!feature.windowsOnly || isWindows) &&
+        if ((!feature.windowsOnly || isWindows) &&
             (!feature.androidOnly || !isWindows) &&
             _visible(feature, admin: widget.isAdmin))
           feature,

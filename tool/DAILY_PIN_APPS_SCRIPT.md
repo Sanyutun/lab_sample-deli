@@ -1,5 +1,9 @@
 # Daily PIN mail through Google Sheets + Apps Script
 
+> **Not used by the current office app.** Sensitive actions now ask for the
+> Admin PIN, so no daily code is generated, emailed or published. This guide is
+> kept only in case the daily-PIN feature is ever switched back on.
+
 The app no longer talks to Gmail over SMTP, so no sender address or app password
 is stored. It writes today's PINs and each user's Gmail to the `DailyPins` tab.
 An Apps Script in the same spreadsheet does the sending.

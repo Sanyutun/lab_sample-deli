@@ -18,7 +18,8 @@ class User {
   final UserRole role;
   final bool active;
 
-  /// Where the daily PIN is emailed. Empty means "do not email".
+  /// Legacy delivery address for the old daily-PIN email. The current build
+  /// asks for the Admin PIN instead, so this is only kept for backups.
   final String email;
 
   bool get isAdmin => role == UserRole.admin;

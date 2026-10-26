@@ -44,8 +44,6 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final services = AppScope.of(context);
       final user = await services.auth.login(_pinController.text);
-      // Opens the day's PINs if the app stayed open past midnight.
-      await services.dailyPins.ensureToday();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
@@ -120,7 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'Admin PIN 1234 · Staff PIN 1111',
+                'Staff: ask the admin for your login PIN.',
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: Colors.grey),
               ),

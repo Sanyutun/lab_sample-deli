@@ -682,8 +682,6 @@ class AdminSettingsScreen extends StatelessWidget {
           Divider(),
           _UsersSection(),
           Divider(),
-          _DailyPinSection(),
-          Divider(),
           _ReconSettingsSection(),
           Divider(),
           _SheetsConfigSection(),
@@ -721,8 +719,13 @@ class _DashboardButtonsSectionState extends State<_DashboardButtonsSection> {
     }
   }
 
-  bool _on(DashboardFeature feature, {required bool admin}) =>
-      _settings[feature.visibilityKey(admin: admin)] != '0';
+  bool _on(DashboardFeature feature, {required bool admin}) {
+    final value = _settings[feature.visibilityKey(admin: admin)];
+    // Buttons that are admin-only start hidden from staff; everything else is
+    // visible until an admin turns it off.
+    if (value == null) return admin || !feature.adminOnly;
+    return value != '0';
+  }
 
   Future<void> _toggle(
     DashboardFeature feature, {
@@ -750,8 +753,9 @@ class _DashboardButtonsSectionState extends State<_DashboardButtonsSection> {
       children: [
         const SectionTitle('Dashboard buttons'),
         Text(
-          'Untick a button to hide it from that role. Admin Settings always '
-          'stays visible, so you cannot lock yourself out.',
+          'Untick a button to hide it from that role. Buttons that are admin '
+          'only start unticked for Staff — tick Staff to let them open it. '
+          'Admin Settings always stays visible, so you cannot lock yourself out.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
@@ -769,11 +773,9 @@ class _DashboardButtonsSectionState extends State<_DashboardButtonsSection> {
               SizedBox(
                 width: 56,
                 child: Checkbox(
-                  value: !feature.adminOnly && _on(feature, admin: false),
-                  onChanged: feature.adminOnly
-                      ? null
-                      : (v) =>
-                            _toggle(feature, admin: false, value: v ?? false),
+                  value: _on(feature, admin: false),
+                  onChanged: (v) =>
+                      _toggle(feature, admin: false, value: v ?? false),
                 ),
               ),
               SizedBox(
@@ -813,55 +815,30 @@ class _CommissionRulesSectionState extends State<_CommissionRulesSection> {
     if (mounted) setState(() => _rules = rules);
   }
 
+  Future<void> _add() async {
+    final result = await _showForm();
+    if (result == null) return;
+    final s = AppScope.of(context);
+    try {
+      final rule = await s.commissions.addRule(
+        minAmount: result.min,
+        maxAmount: result.max,
+        commissionAmount: result.amount,
+        active: result.active,
+      );
+      await s.audit.record(
+        'COMMISSION_RULE_ADDED',
+        refId: rule.id,
+        newValue: _describe(rule),
+      );
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+    await _load();
+  }
+
   Future<void> _edit(CommissionRule rule) async {
-    final minC = TextEditingController(text: '${rule.minAmount}');
-    final maxC = TextEditingController(text: rule.maxAmount?.toString() ?? '');
-    final amtC = TextEditingController(text: '${rule.commissionAmount}');
-    final result = await showDialog<_RuleForm>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Commission rule'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: minC,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Min receipt total'),
-            ),
-            TextField(
-              controller: maxC,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Max receipt total (empty = no limit)',
-              ),
-            ),
-            TextField(
-              controller: amtC,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Commission amount'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              ctx,
-              _RuleForm(
-                int.tryParse(minC.text.trim()) ?? 0,
-                int.tryParse(maxC.text.trim()),
-                int.tryParse(amtC.text.trim()) ?? 0,
-              ),
-            ),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+    final result = await _showForm(rule: rule);
     if (result == null) return;
     final s = AppScope.of(context);
     final updated = CommissionRule(
@@ -869,19 +846,129 @@ class _CommissionRulesSectionState extends State<_CommissionRulesSection> {
       minAmount: result.min,
       maxAmount: result.max,
       commissionAmount: result.amount,
-      active: rule.active,
+      active: result.active,
     );
-    await s.commissions.updateRule(updated);
-    await s.audit.record(
-      'COMMISSION_RULE_CHANGED',
-      refId: rule.id,
-      oldValue:
-          '${rule.minAmount}-${rule.maxAmount} -> ${rule.commissionAmount}',
-      newValue:
-          '${updated.minAmount}-${updated.maxAmount} -> ${updated.commissionAmount}',
-    );
-    _load();
+    try {
+      await s.commissions.updateRule(updated);
+      await s.audit.record(
+        'COMMISSION_RULE_CHANGED',
+        refId: rule.id,
+        oldValue: _describe(rule),
+        newValue: _describe(updated),
+      );
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+    await _load();
   }
+
+  /// One dialog for both adding and editing. The error stays inside the dialog
+  /// so a typo does not throw the admin's numbers away.
+  Future<_RuleForm?> _showForm({CommissionRule? rule}) async {
+    final minC = TextEditingController(
+      text: rule == null ? '' : '${rule.minAmount}',
+    );
+    final maxC = TextEditingController(text: rule?.maxAmount?.toString() ?? '');
+    final amtC = TextEditingController(
+      text: rule == null ? '' : '${rule.commissionAmount}',
+    );
+    var active = rule?.active ?? true;
+    String? error;
+    return showDialog<_RuleForm>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(rule == null ? 'New commission rule' : 'Commission rule'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: minC,
+                autofocus: rule == null,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Min receipt total',
+                ),
+              ),
+              TextField(
+                controller: maxC,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Max receipt total (empty = no limit)',
+                ),
+              ),
+              TextField(
+                controller: amtC,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Commission amount',
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: active,
+                title: const Text('Active'),
+                subtitle: const Text('Off stops this band being used.'),
+                onChanged: (v) => setDialogState(() => active = v),
+              ),
+              if (error != null)
+                Text(error!, style: const TextStyle(color: Colors.red)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final min = int.tryParse(minC.text.trim());
+                final maxText = maxC.text.trim();
+                final max = maxText.isEmpty ? null : int.tryParse(maxText);
+                final amount = int.tryParse(amtC.text.trim());
+                String? problem;
+                if (min == null || min < 0) {
+                  problem = 'Min receipt total must be 0 or more';
+                } else if (maxText.isNotEmpty && max == null) {
+                  problem = 'Max receipt total must be a number';
+                } else if (max != null && max < min) {
+                  problem = 'Max receipt total must be the same as or larger than min';
+                } else if (amount == null || amount < 1) {
+                  problem = 'Commission amount must be 1 MMK or more';
+                } else {
+                  problem = _overlapError(min, max, rule?.id);
+                }
+                if (problem != null) {
+                  setDialogState(() => error = problem);
+                  return;
+                }
+                Navigator.pop(ctx, _RuleForm(min!, max, amount!, active));
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String? _overlapError(int min, int? max, String? ignoreId) {
+    for (final other in _rules) {
+      if (other.id == ignoreId) continue;
+      final overlaps =
+          (max == null || other.minAmount <= max) &&
+          (other.maxAmount == null || min <= other.maxAmount!);
+      if (overlaps) {
+        return 'Overlaps ${fmtMMK(other.minAmount)} – '
+            '${other.maxAmount == null ? '∞' : fmtMMK(other.maxAmount!)}';
+      }
+    }
+    return null;
+  }
+
+  static String _describe(CommissionRule r) =>
+      '${r.minAmount}-${r.maxAmount ?? 'no limit'} -> '
+      '${r.commissionAmount} MMK · ${r.active ? 'on' : 'off'}';
 
   @override
   Widget build(BuildContext context) {
@@ -890,7 +977,9 @@ class _CommissionRulesSectionState extends State<_CommissionRulesSection> {
       children: [
         const SectionTitle('Commission rules (staff selectable amounts)'),
         Text(
-          'Expected commission = rule matching the official receipt total.',
+          'Expected commission = rule matching the official receipt total. '
+          'Tap a rule to change it. Bands must not overlap, so to add one '
+          'between two bands, first shorten the band above it.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         for (final r in _rules)
@@ -899,6 +988,7 @@ class _CommissionRulesSectionState extends State<_CommissionRulesSection> {
             title: Text(
               '${fmtMMK(r.minAmount)} – ${r.maxAmount == null ? '∞' : fmtMMK(r.maxAmount!)}',
             ),
+            subtitle: r.active ? null : const Text('Inactive'),
             trailing: Text(
               fmtMMK(r.commissionAmount),
               style: const TextStyle(
@@ -908,6 +998,12 @@ class _CommissionRulesSectionState extends State<_CommissionRulesSection> {
             ),
             onTap: () => _edit(r),
           ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _add,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('ADD RULE'),
+        ),
       ],
     );
   }
@@ -934,22 +1030,77 @@ class _MilestoneRulesSectionState extends State<_MilestoneRulesSection> {
     if (mounted) setState(() => _rules = rules);
   }
 
+  Future<void> _add() async {
+    final result = await _showForm();
+    if (result == null) return;
+    final s = AppScope.of(context);
+    try {
+      final rule = await s.milestones.addRule(
+        everyN: result.everyN,
+        rewardAmount: result.amount,
+        active: result.active,
+      );
+      await s.audit.record(
+        'MILESTONE_RULE_ADDED',
+        refId: rule.id,
+        newValue: _describe(rule),
+      );
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+    await _load();
+  }
+
   /// Amount, delivery count and on/off are the admin's to set. Rewards already
   /// earned keep the amount they were created with.
   Future<void> _edit(MilestoneRule rule) async {
-    final everyC = TextEditingController(text: '${rule.everyN}');
-    final amountC = TextEditingController(text: '${rule.rewardAmount}');
-    var active = rule.active;
-    final result = await showDialog<_MilestoneForm>(
+    final result = await _showForm(rule: rule);
+    if (result == null) return;
+    final s = AppScope.of(context);
+    final updated = MilestoneRule(
+      id: rule.id,
+      everyN: result.everyN,
+      rewardAmount: result.amount,
+      active: result.active,
+    );
+    try {
+      await s.milestones.updateRule(updated);
+      await s.audit.record(
+        'MILESTONE_RULE_CHANGED',
+        refId: rule.id,
+        oldValue: _describe(rule),
+        newValue: _describe(updated),
+      );
+    } on AppException catch (e) {
+      if (mounted) showMessage(context, e.message, error: true);
+    }
+    await _load();
+  }
+
+  /// One dialog for both adding and editing, with validation kept inside so a
+  /// mistake does not close the form.
+  Future<_MilestoneForm?> _showForm({MilestoneRule? rule}) async {
+    final everyC = TextEditingController(
+      text: rule == null ? '' : '${rule.everyN}',
+    );
+    final amountC = TextEditingController(
+      text: rule == null ? '' : '${rule.rewardAmount}',
+    );
+    var active = rule?.active ?? true;
+    String? error;
+    return showDialog<_MilestoneForm>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Milestone reward'),
+          title: Text(
+            rule == null ? 'New milestone reward' : 'Milestone reward',
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: everyC,
+                autofocus: rule == null,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Every N deliveries',
@@ -971,6 +1122,8 @@ class _MilestoneRulesSectionState extends State<_MilestoneRulesSection> {
                 ),
                 onChanged: (v) => setDialogState(() => active = v),
               ),
+              if (error != null)
+                Text(error!, style: const TextStyle(color: Colors.red)),
             ],
           ),
           actions: [
@@ -979,40 +1132,32 @@ class _MilestoneRulesSectionState extends State<_MilestoneRulesSection> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(
-                ctx,
-                _MilestoneForm(
-                  int.tryParse(everyC.text.trim()) ?? 0,
-                  int.tryParse(amountC.text.trim()) ?? 0,
-                  active,
-                ),
-              ),
+              onPressed: () {
+                final everyN = int.tryParse(everyC.text.trim());
+                final amount = int.tryParse(amountC.text.trim());
+                String? problem;
+                if (everyN == null || everyN < 1) {
+                  problem = 'Every N deliveries must be 1 or more';
+                } else if (amount == null || amount < 1) {
+                  problem = 'Reward amount must be 1 MMK or more';
+                } else if (_rules.any(
+                  (r) => r.everyN == everyN && r.id != rule?.id,
+                )) {
+                  problem =
+                      'A rule for every $everyN deliveries already exists';
+                }
+                if (problem != null) {
+                  setDialogState(() => error = problem);
+                  return;
+                }
+                Navigator.pop(ctx, _MilestoneForm(everyN!, amount!, active));
+              },
               child: const Text('Save'),
             ),
           ],
         ),
       ),
     );
-    if (result == null) return;
-    final s = AppScope.of(context);
-    final updated = MilestoneRule(
-      id: rule.id,
-      everyN: result.everyN,
-      rewardAmount: result.amount,
-      active: result.active,
-    );
-    try {
-      await s.milestones.updateRule(updated);
-      await s.audit.record(
-        'MILESTONE_RULE_CHANGED',
-        refId: rule.id,
-        oldValue: _describe(rule),
-        newValue: _describe(updated),
-      );
-    } on AppException catch (e) {
-      if (mounted) showMessage(context, e.message, error: true);
-    }
-    _load();
   }
 
   static String _describe(MilestoneRule r) =>
@@ -1043,6 +1188,12 @@ class _MilestoneRulesSectionState extends State<_MilestoneRulesSection> {
             ),
             onTap: () => _edit(r),
           ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _add,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('ADD REWARD RULE'),
+        ),
       ],
     );
   }
@@ -1076,22 +1227,34 @@ class _UsersSectionState extends State<_UsersSection> {
     if (mounted) setState(() => _users = users);
   }
 
-  Future<void> _editEmail(User user) async {
-    final controller = TextEditingController(text: user.email);
-    final email = await showDialog<String>(
+  Future<void> _editPin(User user) async {
+    final controller = TextEditingController();
+    final entered = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Gmail for ${user.name}'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(
-            labelText: 'Gmail address',
-            hintText: 'name@gmail.com',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
+        title: Text('Login PIN for ${user.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Use 4 to 8 digits. Only the admin can change it.',
+              style: Theme.of(ctx).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 8,
+              decoration: const InputDecoration(
+                labelText: 'New login PIN',
+                counterText: '',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (v) => Navigator.pop(ctx, v),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -1105,161 +1268,68 @@ class _UsersSectionState extends State<_UsersSection> {
         ],
       ),
     );
-    if (email == null || !mounted) return;
-    final clean = email.trim();
-    if (clean.isNotEmpty && !clean.contains('@')) {
-      showMessage(context, 'Enter a valid Gmail address', error: true);
+    if (entered == null || !mounted) return;
+    final clean = entered.trim();
+    if (clean.length < 4 || clean.length > 8 || int.tryParse(clean) == null) {
+      showMessage(context, 'PIN must be 4 to 8 digits', error: true);
       return;
     }
-    await AppScope.of(context).users.update(user.copyWith(email: clean));
-    await _load();
-    if (mounted) {
-      showMessage(
-        context,
-        clean.isEmpty
-            ? 'Daily PINs will no longer be emailed to ${user.name}.'
-            : 'Gmail saved. It will be written to the DailyPins sheet; use '
-                  'RESEND below to send today\'s PIN.',
-      );
+    if (clean == user.pin) {
+      showMessage(context, 'That is already the PIN for ${user.name}');
+      return;
     }
+    final approved = await askAdminPin(
+      context,
+      reason: 'Change the login PIN for ${user.name}?',
+    );
+    if (!approved || !mounted) return;
+    final services = AppScope.of(context);
+    await services.users.update(user.copyWith(pin: clean));
+    await services.audit.record('USER_PIN_CHANGED', refId: user.id);
+    await _load();
+    if (mounted) showMessage(context, 'Login PIN changed for ${user.name}');
   }
 
   @override
   Widget build(BuildContext context) {
+    final stillDefault = _users.any((u) => u.isAdmin && u.pin == '1234');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SectionTitle('Users'),
         Text(
-          'Each active user gets a new 6-digit PIN every day. Set the Gmail '
-          'address that should receive it; it is written to the DailyPins sheet '
-          'for its Apps Script to mail. RESEND is in Daily PINs below.',
+          'Sensitive actions (delete, take a payment back, correct) ask for the '
+          'Admin PIN, so staff never need a daily code or an email. Tap a user '
+          'to change their login PIN.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (stillDefault)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'The Admin PIN is still the default 1234. Change it now.',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
         for (final u in _users)
           ListTile(
             dense: true,
             leading: const Icon(Icons.person),
             title: Text(u.name),
-            subtitle: Text(
-              '${u.role.name} · login PIN ${u.pin}'
-              '${u.email.isEmpty ? '' : ' · ${u.email}'}',
-            ),
+            subtitle: Text('${u.role.name} · login PIN ${u.pin}'),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (u.isAdmin) const Chip(label: Text('ADMIN')),
                 IconButton(
-                  tooltip: 'Set Gmail address',
-                  onPressed: () => _editEmail(u),
-                  icon: const Icon(Icons.edit, size: 18),
+                  tooltip: 'Change login PIN',
+                  onPressed: () => _editPin(u),
+                  icon: const Icon(Icons.key, size: 18),
                 ),
               ],
             ),
-            onTap: () => _editEmail(u),
+            onTap: () => _editPin(u),
           ),
-      ],
-    );
-  }
-}
-
-class _DailyPinSection extends StatefulWidget {
-  const _DailyPinSection();
-
-  @override
-  State<_DailyPinSection> createState() => _DailyPinSectionState();
-}
-
-class _DailyPinSectionState extends State<_DailyPinSection> {
-  bool _sending = false;
-
-  /// Name, Gmail and today's PIN, so a failed mail does not lock the office out
-  /// of delete/un-pay/correct.
-  List<(String, String, String)> _today = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final services = AppScope.of(context);
-    final today = <(String, String, String)>[];
-    for (final user in (await services.users.all()).where((u) => u.active)) {
-      final pin = await services.dailyPins.currentPin(user.id);
-      if (pin != null) today.add((user.name, user.email, pin));
-    }
-    if (!mounted) return;
-    setState(() => _today = today);
-  }
-
-  Future<void> _resend() async {
-    if (_sending) return;
-    setState(() => _sending = true);
-    final message = await AppScope.of(context).dailyPins.resendToday();
-    if (!mounted) return;
-    setState(() => _sending = false);
-    await _load();
-    if (mounted) showMessage(context, message);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final configured = AppScope.of(context).sheets.config.isConfigured;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SectionTitle('Daily PINs'),
-        Text(
-          'A new 6-digit PIN is created for every active user each day and is '
-          'needed to delete a transaction, take a payment back, or correct a '
-          'transaction. The PINs and each user\'s Gmail are written to the '
-          'DailyPins sheet. An Apps Script installed in that spreadsheet sends '
-          'them from its owner\'s Gmail, so no Gmail password is stored here.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (!configured)
-          const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: Text(
-              'Google Sheets is not configured, so PINs cannot be written for '
-              'the Apps Script to email. Set the credentials below.',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton(
-              onPressed: _sending ? null : _resend,
-              child: Text(_sending ? 'WRITING...' : 'RESEND TODAY\'S PINS'),
-            ),
-          ],
-        ),
-        if (_today.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            'Today\'s PINs (use if a mail did not arrive)',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          for (final (name, email, pin) in _today)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(name),
-              subtitle: Text(email.isEmpty ? 'No Gmail set' : email),
-              trailing: SelectableText(
-                pin,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-        ],
       ],
     );
   }
@@ -1426,10 +1496,11 @@ class _SheetsConfigSectionState extends State<_SheetsConfigSection> {
 }
 
 class _RuleForm {
-  const _RuleForm(this.min, this.max, this.amount);
+  const _RuleForm(this.min, this.max, this.amount, this.active);
   final int min;
   final int? max;
   final int amount;
+  final bool active;
 }
 
 // ---------------------------------------------------------------------------

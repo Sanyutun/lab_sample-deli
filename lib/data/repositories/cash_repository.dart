@@ -35,6 +35,23 @@ class CashRepository {
     return rows.map(CashAdvance.fromMap).toList();
   }
 
+  Future<CashAdvance?> findAdvance(String id) async {
+    final m = await _storage.findOne(advancesTable, {'id': id});
+    return m == null ? null : CashAdvance.fromMap(m);
+  }
+
+  Future<void> updateAdvance(CashAdvance advance) async {
+    await _storage.update(
+      advancesTable,
+      {'id': advance.id},
+      advance.toMap(),
+    );
+  }
+
+  Future<void> removeAdvance(String id) async {
+    await _storage.remove(advancesTable, {'id': id});
+  }
+
   // ---- ledger ----
 
   Future<CashTransaction> insertTxn({
@@ -64,6 +81,28 @@ class CashRepository {
   Future<List<CashTransaction>> ledger() async {
     final rows = await _storage.find(txnsTable, orderBy: '-date');
     return rows.map(CashTransaction.fromMap).toList();
+  }
+
+  /// The ledger entry created with a cash advance, if it still exists.
+  Future<CashTransaction?> advanceTxn(String advanceId) async {
+    final m = await _storage.findOne(txnsTable, {
+      'ref_type': 'cash_advance',
+      'ref_id': advanceId,
+    });
+    return m == null ? null : CashTransaction.fromMap(m);
+  }
+
+  Future<void> updateTxn({
+    required String id,
+    required int amount,
+    required String date,
+    required String note,
+  }) async {
+    await _storage.update(txnsTable, {'id': id}, {
+      'amount': amount,
+      'date': date,
+      'note': note,
+    });
   }
 
   Future<int> balance({String? throughDate}) async {

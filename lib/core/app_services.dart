@@ -206,7 +206,6 @@ class AppServices {
       sheets,
       audit,
     );
-    await dailyPins.ensureToday();
     final companion = CompanionService(
       accounts: companionAccounts,
       locations: locations,

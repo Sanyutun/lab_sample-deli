@@ -14,6 +14,13 @@ String fmtDate(int ms) =>
 String fmtDay(int ms) =>
     DateFormat('dd/MM/yyyy').format(DateTime.fromMillisecondsSinceEpoch(ms));
 
+/// Shows a stored `yyyy-MM-dd` date as `dd/MM/yyyy`.
+String reformatDate(String iso) {
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  return DateFormat('dd/MM/yyyy').format(d);
+}
+
 /// One `Label: value` line per field read off a printed receipt, skipping the
 /// ones the job did not carry.
 List<Widget> receiptFieldLines(PrintedInvoice printed) {
@@ -331,8 +338,9 @@ Future<bool> confirmMarkPaid(
   return ok ?? false;
 }
 
-/// Admin-PIN gate for overriding a QR-only delivery man. Money-changing
-/// actions use [askDailyPin] instead.
+/// Admin-PIN gate for sensitive actions: deleting or correcting a transaction,
+/// taking a payment back, overriding a QR-only delivery man, and closing a
+/// month. Staff never need a daily code; they call the admin over.
 Future<bool> askAdminPin(
   BuildContext context, {
   required String reason,
@@ -377,64 +385,6 @@ Future<bool> askAdminPin(
   final ok = await AppScope.of(context).auth.verifyAdminPin(entered);
   if (!ok && context.mounted) {
     showMessage(context, 'Wrong admin PIN', error: true);
-  }
-  return ok;
-}
-
-/// Asks for the logged-in user's PIN for today. The PIN is emailed each day and
-/// is required only for money-changing actions. Returns false on cancel or a
-/// wrong PIN.
-Future<bool> askDailyPin(BuildContext context, {required String reason}) async {
-  final services = AppScope.of(context);
-  await services.dailyPins.ensureToday();
-  if (!context.mounted) return false;
-  final controller = TextEditingController();
-  final entered = await showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Daily PIN needed'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(reason),
-          const SizedBox(height: 12),
-          TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            decoration: const InputDecoration(
-              labelText: 'Daily PIN',
-              counterText: '',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (v) => Navigator.pop(ctx, v),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'The PIN emailed to you today.',
-            style: Theme.of(ctx).textTheme.bodySmall,
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, controller.text),
-          child: const Text('CONFIRM'),
-        ),
-      ],
-    ),
-  );
-  if (entered == null || !context.mounted) return false;
-  final user = services.auth.requireUser();
-  final ok = await services.dailyPins.verify(user.id, entered);
-  if (!ok && context.mounted) {
-    showMessage(context, 'Wrong daily PIN', error: true);
   }
   return ok;
 }

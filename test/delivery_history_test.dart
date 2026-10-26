@@ -100,4 +100,29 @@ void main() {
     expect(find.textContaining('B1'), findsOneWidget);
     expect(find.textContaining('A1'), findsNothing);
   });
+
+  testWidgets('Staff see deliveries entered by another user', (tester) async {
+    final services = await AppServices.bootstrap(MemoryStorage());
+    final admin = (await services.users.all()).firstWhere((u) => u.isAdmin);
+    await services.auth.login('1111');
+    final man = await services.deliveryMen.create(name: 'Aung Aung');
+    await services.delivery.recordCommission(
+      barcode: 'C1',
+      deliveryManId: man.id,
+      commission: 1000,
+      staffUserId: admin.id,
+    );
+
+    await tester.pumpWidget(
+      AppScope(
+        services: services,
+        child: const MaterialApp(home: DeliveryHistoryScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(services.auth.isAdmin, isFalse);
+    expect(find.textContaining('C1'), findsOneWidget);
+    expect(find.text('No deliveries recorded yet.'), findsNothing);
+  });
 }

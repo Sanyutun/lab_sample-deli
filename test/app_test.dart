@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lab_commission/core/app_services.dart';
+import 'package:lab_commission/data/models/models.dart';
 import 'package:lab_commission/data/storage/app_storage.dart';
 import 'package:lab_commission/domain/dashboard_features.dart';
 import 'package:lab_commission/main.dart';
@@ -99,6 +100,56 @@ void main() {
 
     expect(find.text('Remaining cash'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('Ledger shows patient details for commission payments', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final services = await AppServices.bootstrap(MemoryStorage());
+    final users = await services.users.all();
+    final staffId = users.firstWhere((u) => !u.isAdmin).id;
+    final man = await services.deliveryMen.create(name: 'U Aung');
+    await services.printedReceipts.save(
+      const PrintedReceipt(
+        barcode: 'A1',
+        patient: 'Aye Chan',
+        ageSex: '34/F',
+        refer: 'Dr. Lin',
+        receiptDate: '18/10/2026 14:30',
+        detectedAt: 1,
+      ),
+    );
+    await services.delivery.recordCommission(
+      barcode: 'A1',
+      deliveryManId: man.id,
+      commission: 2000,
+      staffUserId: staffId,
+    );
+    final record = await services.commissions.findByBarcode('A1');
+    await services.cashService.payCommission(
+      recordId: record.id,
+      staffUserId: staffId,
+    );
+
+    await tester.pumpWidget(LabCommissionApp(services: services));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '1111');
+    await tester.tap(find.text('LOGIN'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Cash & Closing'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Patient: Aye Chan'), findsOneWidget);
+    expect(find.textContaining('Age/Sex: 34/F'), findsOneWidget);
+    expect(find.textContaining('Refer: Dr. Lin'), findsOneWidget);
+    expect(find.textContaining('Date: 18/10/2026 14:30'), findsOneWidget);
   });
 
   testWidgets('Adding a delivery man persists it', (tester) async {
@@ -355,7 +406,6 @@ void main() {
     final services = await AppServices.bootstrap(MemoryStorage());
     await services.auth.login('1111');
     final staffId = services.auth.requireUser().id;
-    final staffPin = (await services.dailyPins.currentPin(staffId))!;
     final man = await services.deliveryMen.create(name: 'Moe Thin');
 
     // The 10th delivery hits the seeded milestone rule (4,000 MMK).
@@ -415,10 +465,10 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'UNPAY'));
     await tester.pumpAndSettle();
 
-    // Taking the payment back needs today's PIN.
-    expect(find.text('Daily PIN needed'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), staffPin);
-    await tester.tap(find.widgetWithText(FilledButton, 'CONFIRM'));
+    // Taking the payment back needs the admin PIN.
+    expect(find.text('Admin approval needed'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '1234');
+    await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Reward un-paid'), findsOneWidget);
@@ -479,5 +529,112 @@ void main() {
     // Hidden for staff only: admins still get the button.
     await showDashboard(isAdmin: true);
     expect(find.text('Delivery Board'), findsOneWidget);
+  });
+
+  testWidgets('Admin can allow an admin-only button for staff', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final services = await AppServices.bootstrap(MemoryStorage());
+    await tester.pumpWidget(
+      AppScope(
+        services: services,
+        child: const MaterialApp(home: AdminSettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final row = find
+        .ancestor(
+          of: find.text('Commission History'),
+          matching: find.byType(Row),
+        )
+        .first;
+    final staffBox = find
+        .descendant(of: row, matching: find.byType(Checkbox))
+        .first;
+
+    // Admin-only buttons start hidden from staff, but the box can be ticked.
+    expect(tester.widget<Checkbox>(staffBox).value, isFalse);
+    expect(tester.widget<Checkbox>(staffBox).onChanged, isNotNull);
+
+    await tester.ensureVisible(staffBox);
+    await tester.tap(staffBox);
+    await tester.pumpAndSettle();
+    expect(
+      await services.settings.get(
+        DashboardFeature.commissionHistory.visibilityKey(admin: false),
+      ),
+      '1',
+    );
+
+    await tester.pumpWidget(
+      AppScope(
+        services: services,
+        child: const MaterialApp(
+          home: DashboardScreen(userName: 'Staff', isAdmin: false),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Commission History'), findsOneWidget);
+    // Admin Settings itself still cannot be granted to staff.
+    expect(find.text('Admin Settings'), findsNothing);
+  });
+
+  testWidgets('admin changes a login PIN, gated by the admin PIN', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final services = await AppServices.bootstrap(MemoryStorage());
+    await services.auth.login('1234');
+
+    await tester.pumpWidget(
+      AppScope(
+        services: services,
+        child: const MaterialApp(home: AdminSettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byTooltip('Change login PIN').first);
+    await tester.tap(find.byTooltip('Change login PIN').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Login PIN for Admin'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextField, 'New login PIN'),
+      '4321',
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('SAVE'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Saving asks for the current admin PIN first.
+    expect(find.text('Admin approval needed'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Admin PIN'), '1234');
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+
+    final admin = (await services.users.all()).firstWhere((u) => u.isAdmin);
+    expect(admin.pin, '4321');
+    expect(await services.auth.verifyAdminPin('4321'), isTrue);
+    expect(await services.auth.verifyAdminPin('1234'), isFalse);
+    expect(find.textContaining('login PIN 4321'), findsOneWidget);
+    expect(
+      (await services.audit.logs()).where((l) => l.action == 'USER_PIN_CHANGED'),
+      hasLength(1),
+    );
   });
 }

@@ -292,13 +292,12 @@ void main() {
       final updated = await services.commissions.findById(result.record.id);
       expect(updated!.isPaid, isTrue);
 
-      // tapping again takes the payment back, but only with today's PIN
-      final staffPin = (await services.dailyPins.currentPin(staff.id))!;
+      // tapping again takes the payment back, but only with the admin PIN
       await tester.tap(find.text('01'));
       await tester.pumpAndSettle();
-      expect(find.text('Daily PIN needed'), findsOneWidget);
-      await tester.enterText(find.byType(TextField), staffPin);
-      await tester.tap(find.widgetWithText(FilledButton, 'CONFIRM'));
+      expect(find.text('Admin approval needed'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '1234');
+      await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
       await tester.pumpAndSettle();
       expect(find.text('UNPAID'), findsOneWidget);
       final reverted = await services.commissions.findById(result.record.id);
@@ -307,7 +306,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     });
 
-    testWidgets('board card can be marked paid, and only the daily PIN can '
+    testWidgets('board card can be marked paid, and only the admin PIN can '
         'take it back', (tester) async {
       tester.view.physicalSize = const Size(400, 900);
       tester.view.devicePixelRatio = 1.0;
@@ -318,7 +317,6 @@ void main() {
       final man = await services.deliveryMen.create(name: 'Ko Aung');
       final users = await services.users.all();
       final staff = users.firstWhere((u) => !u.isAdmin);
-      final staffPin = (await services.dailyPins.currentPin(staff.id))!;
       final result = await services.delivery.recordCommission(
         barcode: '100125',
         deliveryManId: man.id,
@@ -357,7 +355,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('PAID'), findsWidgets);
 
-      // A wrong PIN changes nothing.
+      // A wrong admin PIN changes nothing.
       await tester.tap(find.text('Take payment back'));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -367,7 +365,7 @@ void main() {
         ),
         '9999',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'CONFIRM'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
       await tester.pumpAndSettle();
       expect(
         (await services.commissions.findById(result.record.id))!.isPaid,
@@ -376,7 +374,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();
 
-      // The staff's daily PIN takes the payment back and the ledger returns it.
+      // The admin PIN takes the payment back and the ledger returns it.
       await tester.tap(find.text('Take payment back'));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -384,9 +382,9 @@ void main() {
           of: find.byType(AlertDialog),
           matching: find.byType(TextField),
         ),
-        staffPin,
+        '1234',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'CONFIRM'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
       await tester.pumpAndSettle();
 
       expect(find.text('Payment taken back (+2,000 MMK)'), findsOneWidget);

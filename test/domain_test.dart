@@ -213,6 +213,101 @@ void main() {
       },
     );
 
+    test(
+      '4c. new commission bands are checked before they are stored',
+      () async {
+        // Any band overlapping a seeded one would never be used.
+        await expectLater(
+          services.commissions.addRule(
+            minAmount: 0,
+            maxAmount: 100,
+            commissionAmount: 500,
+          ),
+          throwsA(
+            isA<ValidationException>().having(
+              (e) => e.message,
+              'message',
+              contains('overlaps'),
+            ),
+          ),
+        );
+        await expectLater(
+          services.commissions.addRule(
+            minAmount: 10,
+            maxAmount: 5,
+            commissionAmount: 500,
+          ),
+          throwsA(isA<ValidationException>()),
+        );
+        await expectLater(
+          services.commissions.addRule(
+            minAmount: -1,
+            maxAmount: 20,
+            commissionAmount: 500,
+          ),
+          throwsA(isA<ValidationException>()),
+        );
+        await expectLater(
+          services.commissions.addRule(
+            minAmount: 200001,
+            maxAmount: null,
+            commissionAmount: 0,
+          ),
+          throwsA(isA<ValidationException>()),
+        );
+        expect(await services.commissions.rules(), hasLength(3));
+      },
+    );
+
+    test('4d. a new commission band fits at the top and is used', () async {
+      final top = (await services.commissions.rules()).firstWhere(
+        (r) => r.minAmount == 100001,
+      );
+      // Make room first: bands may not overlap, exactly as the dialog says.
+      await services.commissions.updateRule(
+        CommissionRule(
+          id: top.id,
+          minAmount: top.minAmount,
+          maxAmount: 200000,
+          commissionAmount: top.commissionAmount,
+        ),
+      );
+      final added = await services.commissions.addRule(
+        minAmount: 200001,
+        maxAmount: null,
+        commissionAmount: 5000,
+      );
+      expect(added.active, isTrue);
+      expect(await services.commissions.expectedCommission(250000), 5000);
+      expect(await services.commissions.selectableAmounts(), contains(5000));
+    });
+
+    test('4e. an inactive new band is stored but never matches', () async {
+      final top = (await services.commissions.rules()).firstWhere(
+        (r) => r.minAmount == 100001,
+      );
+      await services.commissions.updateRule(
+        CommissionRule(
+          id: top.id,
+          minAmount: top.minAmount,
+          maxAmount: 200000,
+          commissionAmount: top.commissionAmount,
+        ),
+      );
+      final added = await services.commissions.addRule(
+        minAmount: 200001,
+        maxAmount: null,
+        commissionAmount: 5000,
+        active: false,
+      );
+      expect(added.active, isFalse);
+      expect(await services.commissions.expectedCommission(250000), isNull);
+      expect(
+        await services.commissions.selectableAmounts(),
+        isNot(contains(5000)),
+      );
+    });
+
     test('5. 10-delivery milestone reward is created once', () async {
       for (var i = 1; i <= 10; i++) {
         await record('D$i', commission: 1000);
@@ -295,6 +390,61 @@ void main() {
         ),
         throwsA(isA<ValidationException>()),
       );
+    });
+    test('6e. a new milestone rule is checked before it is stored', () async {
+      final added = await services.milestones.addRule(
+        everyN: 25,
+        rewardAmount: 10000,
+      );
+      expect(added.everyN, 25);
+      expect(await services.milestones.rules(), hasLength(3));
+
+      await expectLater(
+        services.milestones.addRule(everyN: 25, rewardAmount: 12000),
+        throwsA(
+          isA<ValidationException>().having(
+            (e) => e.message,
+            'message',
+            contains('already exists'),
+          ),
+        ),
+      );
+      await expectLater(
+        services.milestones.addRule(everyN: 0, rewardAmount: 1000),
+        throwsA(isA<ValidationException>()),
+      );
+      await expectLater(
+        services.milestones.addRule(everyN: 30, rewardAmount: 0),
+        throwsA(isA<ValidationException>()),
+      );
+
+      final ten = (await services.milestones.rules()).firstWhere(
+        (r) => r.everyN == 10,
+      );
+      await expectLater(
+        services.milestones.updateRule(
+          MilestoneRule(id: ten.id, everyN: 25, rewardAmount: 4000),
+        ),
+        throwsA(isA<ValidationException>()),
+      );
+      expect(
+        (await services.milestones.rules())
+            .firstWhere((r) => r.id == ten.id)
+            .everyN,
+        10,
+      );
+    });
+
+    test('6f. a newly added milestone rule creates rewards', () async {
+      await services.milestones.addRule(everyN: 3, rewardAmount: 2500);
+      for (var i = 1; i <= 3; i++) {
+        await record('R$i');
+      }
+      final rewards = await services.milestones.rewards(deliveryManId: man.id);
+      expect(rewards, hasLength(1));
+      expect(rewards.single.everyN, 3);
+      expect(rewards.single.milestoneCount, 3);
+      expect(rewards.single.rewardAmount, 2500);
     });
   });
 
@@ -599,20 +749,23 @@ void main() {
       expect(matches, hasLength(1));
     });
 
-    test('12a. Test lines of one invoice merge into a single receipt', () async {
-      final report = await importReceipts([
-        ['100200', '2026-08-10', 11000, 'Dr Ko', 'Daw Mya'],
-        ['100200', '2026-08-10', 25000, 'Dr Ko', 'Daw Mya'],
-        ['100200', '2026-08-10', 8000, '', ''],
-      ]);
-      expect(report.imported, 1);
-      expect(report.duplicates, 0);
-      final recs = await services.receipts.officialByBarcode('100200');
-      expect(recs, hasLength(1));
-      expect(recs.single.totalAmount, 44000);
-      expect(recs.single.refer, 'Dr Ko');
-      expect(recs.single.patient, 'Daw Mya');
-    });
+    test(
+      '12a. Test lines of one invoice merge into a single receipt',
+      () async {
+        final report = await importReceipts([
+          ['100200', '2026-08-10', 11000, 'Dr Ko', 'Daw Mya'],
+          ['100200', '2026-08-10', 25000, 'Dr Ko', 'Daw Mya'],
+          ['100200', '2026-08-10', 8000, '', ''],
+        ]);
+        expect(report.imported, 1);
+        expect(report.duplicates, 0);
+        final recs = await services.receipts.officialByBarcode('100200');
+        expect(recs, hasLength(1));
+        expect(recs.single.totalAmount, 44000);
+        expect(recs.single.refer, 'Dr Ko');
+        expect(recs.single.patient, 'Daw Mya');
+      },
+    );
 
     test('13. Barcode MATCH', () async {
       await importReceipts([
@@ -730,25 +883,28 @@ void main() {
       },
     );
 
-    test('17d. Clearing official receipts also clears reconciliation', () async {
-      await importReceipts([
-        ['CLR1', '2026-08-10', 75000],
-      ]);
-      await record('CLR1', commission: 2000);
-      await services.reconciliation.run(createdBy: adminId);
-      expect(await services.reconciliation.officialCount(), 1);
+    test(
+      '17d. Clearing official receipts also clears reconciliation',
+      () async {
+        await importReceipts([
+          ['CLR1', '2026-08-10', 75000],
+        ]);
+        await record('CLR1', commission: 2000);
+        await services.reconciliation.run(createdBy: adminId);
+        expect(await services.reconciliation.officialCount(), 1);
 
-      await services.receipts.clearOfficial();
-      await services.receipts.clearReconciliation();
+        await services.receipts.clearOfficial();
+        await services.receipts.clearReconciliation();
 
-      expect(await services.reconciliation.officialCount(), 0);
-      final (run, results) = await services.reconciliation.latest();
-      expect(run, isNull);
-      expect(results, isEmpty);
-      // Staff records are deliberately kept.
-      final kept = await services.commissions.findByBarcode('CLR1');
-      expect(kept.barcode, 'CLR1');
-    });
+        expect(await services.reconciliation.officialCount(), 0);
+        final (run, results) = await services.reconciliation.latest();
+        expect(run, isNull);
+        expect(results, isEmpty);
+        // Staff records are deliberately kept.
+        final kept = await services.commissions.findByBarcode('CLR1');
+        expect(kept.barcode, 'CLR1');
+      },
+    );
 
     test(
       '17b. An older run reads back with the commission date filled in',
@@ -890,20 +1046,8 @@ void main() {
       ];
       final parsed = OfficialReceiptParser.parse('export.xlsx', rows);
       expect(parsed, hasLength(2));
-      expect(parsed[0], [
-        '100125',
-        '2026-08-10 14:30',
-        75000,
-        'OK',
-        'Daw Mya',
-      ]);
-      expect(parsed[1], [
-        '100126',
-        '2026-08-10 14:32',
-        125000,
-        'JS',
-        'U Aung',
-      ]);
+      expect(parsed[0], ['100125', '2026-08-10 14:30', 75000, 'OK', 'Daw Mya']);
+      expect(parsed[1], ['100126', '2026-08-10 14:32', 125000, 'JS', 'U Aung']);
     });
 
     test('prefers "Patient Name" over a "Patient ID" column', () {

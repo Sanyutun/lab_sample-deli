@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../companion/companion_api_server.dart';
 import '../core/app_services.dart';
+import '../core/office_link.dart';
 import '../data/models/models.dart';
 import '../domain/exceptions.dart';
 import 'common.dart';
@@ -401,8 +402,9 @@ class _CompanionServerScreenState extends State<CompanionServerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'On the other office terminal: login screen → "Server" → '
-                      'enter the address above and this key.',
+                      'On the other office terminal: login screen → "Server", '
+                      'then scan the QR below (or enter the address above and '
+                      'this key).',
                     ),
                     const SizedBox(height: 12),
                     SelectableText(
@@ -413,6 +415,39 @@ class _CompanionServerScreenState extends State<CompanionServerScreen> {
                         fontSize: 16,
                       ),
                     ),
+                    if (_addresses.isNotEmpty &&
+                        (_officeKey ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      for (final ip in _addresses) ...[
+                        Center(
+                          child: QrImageView(
+                            data: OfficeLink(
+                              url: 'http://$ip:$port',
+                              key: _officeKey!,
+                            ).qrPayload,
+                            version: QrVersions.auto,
+                            size: 180,
+                            backgroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Center(
+                          child: Text(
+                            'http://$ip:$port',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      const Text(
+                        'The QR carries the link key too, so the other terminal '
+                        'connects without typing it.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     const Text(
                       'Whoever has this key can read and change the office '

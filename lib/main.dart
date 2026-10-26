@@ -104,12 +104,14 @@ class _LabCommissionAppState extends State<LabCommissionApp> {
     setState(() {
       _error = null;
       _services = null;
+      // Remember the address being tried, so a failed reconnect shows (and
+      // pre-fills) the new server instead of the old one.
+      _link = link;
     });
     try {
       final services = await loader(link.isConfigured ? link : null);
       if (!mounted) return;
       setState(() {
-        _link = link;
         _services = services;
       });
       _watchPrints();
@@ -133,8 +135,6 @@ class _LabCommissionAppState extends State<LabCommissionApp> {
     _printSubscription = watcher.invoices.listen((printed) {
       final services = _services;
       if (services == null) return;
-      // First print of a new day is a natural moment to roll the daily PINs.
-      unawaited(services.dailyPins.ensureToday());
       // Keep what the receipt printed even when nobody is logged in: the
       // board and history screens show it later by barcode.
       unawaited(
@@ -275,52 +275,56 @@ class _ConnectionErrorApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-                const SizedBox(height: 16),
-                Text(
-                  'Cannot open the office data',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Text('$error', textAlign: TextAlign.center),
-                if (link.isConfigured)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'Server: ${link.url}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+      home: Builder(
+        // The dialog needs a context below MaterialApp's Navigator; using the
+        // builder's own context made "Server settings" do nothing on Android.
+        builder: (context) => Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Cannot open the office data',
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                const SizedBox(height: 24),
-                Wrap(
-                  spacing: 12,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: onRetry,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
+                  const SizedBox(height: 8),
+                  Text('$error', textAlign: TextAlign.center),
+                  if (link.isConfigured)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Server: ${link.url}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final chosen = await showOfficeLinkDialog(
-                          context,
-                          link,
-                        );
-                        if (chosen != null) await onReconnect(chosen);
-                      },
-                      icon: const Icon(Icons.dns),
-                      label: const Text('Server settings'),
-                    ),
-                  ],
-                ),
-              ],
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 12,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final chosen = await showOfficeLinkDialog(
+                            context,
+                            link,
+                          );
+                          if (chosen != null) await onReconnect(chosen);
+                        },
+                        icon: const Icon(Icons.dns),
+                        label: const Text('Server settings'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

@@ -8,6 +8,7 @@ import '../domain/exceptions.dart';
 import '../domain/ids.dart';
 import '../domain/period.dart';
 import '../domain/services/finance_service.dart';
+import 'cash_advance_editor.dart';
 import 'common.dart';
 import 'excel_export.dart';
 
@@ -33,6 +34,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
   FinanceReport? _report;
   MonthlyClosing? _closing;
   List<MonthlyClosing> _closings = [];
+  Map<String, CommissionRecord> _commissions = {};
+  Map<String, PrintedReceipt> _receipts = {};
 
   String get _from => _mode == _PeriodMode.day ? _day : monthFirstDay(_month);
   String get _to => _mode == _PeriodMode.day ? _day : monthLastDay(_month);
@@ -46,6 +49,26 @@ class _FinanceScreenState extends State<FinanceScreen> {
   Future<void> _load() async {
     final s = AppScope.of(context);
     final report = await s.finance.report(from: _from, to: _to);
+    // Commission payments point at a commission record, whose barcode opens
+    // the receipt details (patient, age/sex, refer, date) shown in the ledger.
+    final paidRecordIds = <String>{
+      for (final t in report.ledger)
+        if (t.type == CashTxnType.commissionPayment && t.refId != null)
+          t.refId!,
+    };
+    final commissions = <String, CommissionRecord>{};
+    final receipts = <String, PrintedReceipt>{};
+    if (paidRecordIds.isNotEmpty) {
+      for (final r in await s.commissions.all()) {
+        if (paidRecordIds.contains(r.id)) commissions[r.id] = r;
+      }
+      receipts.addAll(
+        receiptDetailsByBarcode(
+          await s.printedReceipts.byBarcode(),
+          await s.receipts.officialReceiptsByBarcode(),
+        ),
+      );
+    }
     MonthlyClosing? closing;
     var closings = <MonthlyClosing>[];
     if (_mode == _PeriodMode.month) {
@@ -57,6 +80,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
       _report = report;
       _closing = closing;
       _closings = closings;
+      _commissions = commissions;
+      _receipts = receipts;
       _loading = false;
     });
   }
@@ -92,6 +117,13 @@ class _FinanceScreenState extends State<FinanceScreen> {
   Future<void> _closeMonth() async {
     final s = AppScope.of(context);
     final actual = int.tryParse(_actual.text.trim()) ?? 0;
+    final approved = await askAdminPin(
+      context,
+      reason:
+          'Close ${monthLabel(_month)} with ${fmtMMK(actual)} counted? '
+          'This locks the month\'s figures.',
+    );
+    if (!approved || !mounted) return;
     try {
       final c = await s.finance.closeMonth(
         month: _month,
@@ -104,6 +136,18 @@ class _FinanceScreenState extends State<FinanceScreen> {
     } on AppException catch (e) {
       showMessage(context, e.message, error: true);
     }
+  }
+
+  Future<void> _editAdvance(CashAdvance advance) async {
+    if (!await editCashAdvance(context, advance) || !mounted) return;
+    setState(() => _loading = true);
+    _load();
+  }
+
+  Future<void> _deleteAdvance(CashAdvance advance) async {
+    if (!await deleteCashAdvance(context, advance) || !mounted) return;
+    setState(() => _loading = true);
+    _load();
   }
 
   Future<void> _exportAdvances() async {
@@ -401,14 +445,23 @@ class _FinanceScreenState extends State<FinanceScreen> {
   }
 
   Widget _ledgerTile(CashTransaction t) {
+    final detail = _commissionDetail(t);
+    final typeLabel = t.note.isEmpty ? t.type.name : t.note;
     return ListTile(
-      dense: true,
+      dense: detail.isEmpty,
       leading: Icon(
         t.isIncoming ? Icons.south_west : Icons.north_east,
         color: t.isIncoming ? Colors.green : Colors.red,
       ),
-      title: Text(t.note.isEmpty ? t.type.name : t.note),
-      subtitle: Text('${t.date} · ${t.type.name}'),
+      title: Text(typeLabel),
+      subtitle: Text(
+        detail.isEmpty
+            ? '${t.date} · ${t.type.name}'
+            : '${t.date} · ${t.type.name}\n$detail',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+      isThreeLine: detail.isNotEmpty,
       trailing: Text(
         t.isIncoming ? '+${fmtMMK(t.amount)}' : fmtMMK(t.amount),
         style: TextStyle(
@@ -419,18 +472,51 @@ class _FinanceScreenState extends State<FinanceScreen> {
     );
   }
 
+  /// Receipt details for a commission payment, so the ledger shows who the
+  /// payment belongs to instead of only the barcode in the note. Empty when the
+  /// entry is not a commission payment or no receipt was captured.
+  String _commissionDetail(CashTransaction t) {
+    if (t.type != CashTxnType.commissionPayment) return '';
+    final record = _commissions[t.refId];
+    if (record == null) return '';
+    final r = _receipts[record.barcode];
+    if (r == null) return '';
+    return [
+      if (r.patient.isNotEmpty) 'Patient: ${r.patient}',
+      if (r.ageSex.isNotEmpty) 'Age/Sex: ${r.ageSex}',
+      if (r.refer.isNotEmpty) 'Refer: ${r.refer}',
+      if (r.receiptDate.isNotEmpty) 'Date: ${r.receiptDate}',
+    ].join(' · ');
+  }
+
   Widget _advanceTile(CashAdvance a) {
     return ListTile(
       dense: true,
       leading: const Icon(Icons.payments),
       title: Text(a.note.isEmpty ? 'Advance ${a.date}' : a.note),
-      subtitle: Text(a.date),
-      trailing: Text(
-        '+${fmtMMK(a.amount)}',
-        style: const TextStyle(
-          color: Colors.green,
-          fontWeight: FontWeight.bold,
-        ),
+      subtitle: Text('${reformatDate(a.date)} · tap to correct'),
+      onTap: () => _editAdvance(a),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '+${fmtMMK(a.amount)}',
+            style: const TextStyle(
+              color: Colors.green,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Correct advance',
+            icon: const Icon(Icons.edit, size: 18),
+            onPressed: () => _editAdvance(a),
+          ),
+          IconButton(
+            tooltip: 'Delete advance',
+            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+            onPressed: () => _deleteAdvance(a),
+          ),
+        ],
       ),
     );
   }

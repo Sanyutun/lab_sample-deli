@@ -35,7 +35,8 @@ enum DashboardFeature {
   /// Button caption on the dashboard.
   final String label;
 
-  /// Admins only; there is no staff checkbox for it.
+  /// Admins only by default; an admin can still tick the Staff box in Admin
+  /// Settings to let staff open it.
   final bool adminOnly;
 
   final bool windowsOnly;

@@ -28,6 +28,54 @@ class OfficeLink {
 
   bool get isConfigured => url.trim().isNotEmpty && key.trim().isNotEmpty;
 
+  /// The setup QR shown by the host terminal for another office terminal. It
+  /// carries the address and the link key together so the client can connect by
+  /// scanning instead of typing both.
+  String get qrPayload => Uri(
+    scheme: 'laboffice',
+    host: 'link',
+    queryParameters: {
+      'url': url.trim(),
+      if (key.trim().isNotEmpty) 'key': key.trim(),
+    },
+  ).toString();
+
+  /// Reads a scanned setup QR. Accepts this app's office-link payload as well as
+  /// a plain server address (`192.168.1.20:8787` or `http://…`); anything else
+  /// returns null so an unrelated QR code cannot change the server.
+  static OfficeLink? fromScanned(String payload, {String terminalId = ''}) {
+    final raw = payload.trim();
+    if (raw.isEmpty) return null;
+    final uri = Uri.tryParse(raw);
+    if (uri != null &&
+        uri.scheme.toLowerCase() == 'laboffice' &&
+        uri.host.toLowerCase() == 'link') {
+      final url = _normalizeAddress(uri.queryParameters['url'] ?? '');
+      if (url.isEmpty) return null;
+      return OfficeLink(
+        url: url,
+        key: (uri.queryParameters['key'] ?? '').trim(),
+        terminalId: terminalId,
+      );
+    }
+    final url = _normalizeAddress(raw);
+    if (url.isEmpty) return null;
+    return OfficeLink(url: url, terminalId: terminalId);
+  }
+
+  /// Adds the default scheme and requires a host + port, which rejects QR codes
+  /// that happen to contain unrelated text.
+  static String _normalizeAddress(String value) {
+    var url = value.trim();
+    if (url.isEmpty) return '';
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'http://$url';
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty || !uri.hasPort) return '';
+    return url;
+  }
+
   static const OfficeLink local = OfficeLink();
   static const String _fileName = 'office_link.json';
 

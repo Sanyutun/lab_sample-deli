@@ -753,7 +753,7 @@ class _DeliverySuccessScreenState extends State<DeliverySuccessScreen> {
   }
 
   /// Tapping this delivery's card toggles its payment status (paid <-> unpaid).
-  /// Un-paying needs today's PIN: it puts money back into the cash box.
+  /// Un-paying needs the Admin PIN: it puts money back into the cash box.
   Future<void> _togglePayment(DeliverySlot slot) async {
     final record = slot.record;
     if (record == null || !record.isActive) return;
@@ -766,7 +766,7 @@ class _DeliverySuccessScreenState extends State<DeliverySuccessScreen> {
       )) {
         return;
       }
-    } else if (!await askDailyPin(
+    } else if (!await askAdminPin(
       context,
       reason:
           'Take back the ${fmtMMK(record.commission)} commission '
@@ -804,7 +804,7 @@ class _DeliverySuccessScreenState extends State<DeliverySuccessScreen> {
       )) {
         return;
       }
-    } else if (!await askDailyPin(
+    } else if (!await askAdminPin(
       context,
       reason:
           'Take back the ${fmtMMK(reward.rewardAmount)} milestone '

@@ -296,7 +296,7 @@ class _SuccessfulDeliveryScreenState extends State<SuccessfulDeliveryScreen> {
   }
 
   /// Marks the delivery paid (cash leaves the box) or takes the payment back
-  /// (today's PIN: the money returns to the box).
+  /// (admin PIN: the money returns to the box).
   Future<bool> _togglePayment(CommissionRecord record) async {
     final name = _selected?.name ?? record.deliveryManId;
     if (!record.isPaid) {
@@ -307,7 +307,7 @@ class _SuccessfulDeliveryScreenState extends State<SuccessfulDeliveryScreen> {
       )) {
         return false;
       }
-    } else if (!await askDailyPin(
+    } else if (!await askAdminPin(
       context,
       reason:
           'Take back the ${fmtMMK(record.commission)} commission paid to $name?',
@@ -337,7 +337,7 @@ class _SuccessfulDeliveryScreenState extends State<SuccessfulDeliveryScreen> {
   Future<bool> _delete(CommissionRecord record) async {
     final reason = await deleteReasonDialog(context);
     if (reason == null) return false;
-    if (!await askDailyPin(
+    if (!await askAdminPin(
       context,
       reason: 'Delete transaction ${record.barcode}?',
     )) {

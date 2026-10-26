@@ -19,7 +19,11 @@ class CommissionRepository {
       // over 100,000 -> 3,000. Bounds are inclusive, so the bands meet with no
       // gap and no overlap. Admin can change any of this (see admin settings).
       await addRule(minAmount: 0, maxAmount: 9999, commissionAmount: 1000);
-      await addRule(minAmount: 10000, maxAmount: 100000, commissionAmount: 2000);
+      await addRule(
+        minAmount: 10000,
+        maxAmount: 100000,
+        commissionAmount: 2000,
+      );
       await addRule(minAmount: 100001, maxAmount: null, commissionAmount: 3000);
       return;
     }
@@ -43,7 +47,9 @@ class CommissionRepository {
     for (var i = 0; i < existing.length; i++) {
       final (min, max, amount) = _oldDefaultBands[i];
       final r = existing[i];
-      if (r.minAmount != min || r.maxAmount != max || r.commissionAmount != amount) {
+      if (r.minAmount != min ||
+          r.maxAmount != max ||
+          r.commissionAmount != amount) {
         return;
       }
     }
@@ -59,12 +65,19 @@ class CommissionRepository {
     required int minAmount,
     required int? maxAmount,
     required int commissionAmount,
+    bool active = true,
   }) async {
+    await _validateBand(
+      minAmount: minAmount,
+      maxAmount: maxAmount,
+      commissionAmount: commissionAmount,
+    );
     final rule = CommissionRule(
       id: newId('rule'),
       minAmount: minAmount,
       maxAmount: maxAmount,
       commissionAmount: commissionAmount,
+      active: active,
     );
     await _storage.insert(rulesTable, rule.toMap());
     return rule;
@@ -77,7 +90,51 @@ class CommissionRepository {
   }
 
   Future<void> updateRule(CommissionRule rule) async {
+    await _validateBand(
+      minAmount: rule.minAmount,
+      maxAmount: rule.maxAmount,
+      commissionAmount: rule.commissionAmount,
+      ignoreId: rule.id,
+    );
     await _storage.update(rulesTable, {'id': rule.id}, rule.toMap());
+  }
+
+  /// Bands are inclusive and [expectedCommission] takes the first match, so an
+  /// overlap would silently make one of the two bands useless. Rejected bands
+  /// are checked too, otherwise switching one back on would create the overlap.
+  Future<void> _validateBand({
+    required int minAmount,
+    required int? maxAmount,
+    required int commissionAmount,
+    String? ignoreId,
+  }) async {
+    if (minAmount < 0) {
+      throw const ValidationException(
+        'Minimum receipt total cannot be negative',
+      );
+    }
+    if (maxAmount != null && maxAmount < minAmount) {
+      throw const ValidationException(
+        'Maximum receipt total must be the same as or larger than the minimum',
+      );
+    }
+    if (commissionAmount < 1) {
+      throw const ValidationException(
+        'Commission amount must be 1 MMK or more',
+      );
+    }
+    for (final other in await rules()) {
+      if (other.id == ignoreId) continue;
+      final overlaps =
+          (maxAmount == null || other.minAmount <= maxAmount) &&
+          (other.maxAmount == null || minAmount <= other.maxAmount!);
+      if (overlaps) {
+        throw ValidationException(
+          'This band overlaps the existing band '
+          '${other.minAmount}-${other.maxAmount ?? 'no limit'}',
+        );
+      }
+    }
   }
 
   /// Expected commission for an official receipt total, from configured rules.

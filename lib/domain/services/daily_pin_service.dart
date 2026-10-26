@@ -12,11 +12,14 @@ import 'google_sheets_service.dart';
 
 /// One fresh 6-digit action PIN per active user per calendar day.
 ///
-/// The PIN is asked only for money-changing actions (delete, take a payment
-/// back, correct). It is kept locally so the office still works offline and
-/// written to the [sheetName] worksheet with each user's Gmail. The Apps Script
-/// installed in that spreadsheet (see `tool/daily_pin_gsheet.gs`) sends the
-/// PIN from the sheet owner's Gmail, so the app needs no Gmail password.
+/// This is no longer used by the office app: sensitive actions (delete, take a
+/// payment back, correct) now ask for the Admin PIN, so staff need no daily
+/// code and no email. The service and its local table are kept so older data
+/// and tests still load; nothing in the UI generates or publishes PINs.
+///
+/// Historically the PIN was kept locally so the office still worked offline and
+/// written to the [sheetName] worksheet with each user's Gmail, where an Apps
+/// Script mailed it. That Gmail path is no longer triggered.
 class DailyPinService {
   DailyPinService(
     this._pins,

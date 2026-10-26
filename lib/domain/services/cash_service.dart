@@ -53,6 +53,104 @@ class CashService {
     return advance;
   }
 
+  /// Corrects a cash advance. The linked ledger entry is changed too, so the
+  /// cash balance and period reports follow the corrected figure; the old and
+  /// new values are kept in the audit log.
+  Future<CashAdvance> updateAdvance({
+    required String id,
+    required int amount,
+    required String date,
+    required String note,
+    required String updatedBy,
+  }) async {
+    if (amount <= 0) {
+      throw const ValidationException('Advance must be positive');
+    }
+    final cleanDate = date.trim();
+    if (cleanDate.isEmpty) {
+      throw const ValidationException('Advance date is required');
+    }
+    final existing = await cash.findAdvance(id);
+    if (existing == null) {
+      throw const NotFoundException('Cash advance not found');
+    }
+    final cleanNote = note.trim();
+    final updated = CashAdvance(
+      id: existing.id,
+      date: cleanDate,
+      amount: amount,
+      note: cleanNote,
+      createdBy: existing.createdBy,
+      createdAt: existing.createdAt,
+    );
+    final txnNote = cleanNote.isEmpty ? 'Owner cash advance' : cleanNote;
+    final txn = await cash.advanceTxn(id);
+    if (txn == null) {
+      // Older/imported data may not have a linked entry; add one so the
+      // correction is reflected in the cash balance.
+      await cash.insertTxn(
+        type: CashTxnType.advance,
+        amount: amount,
+        refType: 'cash_advance',
+        refId: id,
+        date: cleanDate,
+        note: txnNote,
+        createdBy: updatedBy,
+      );
+    } else {
+      await cash.updateTxn(
+        id: txn.id,
+        amount: amount,
+        date: cleanDate,
+        note: txnNote,
+      );
+    }
+    await cash.updateAdvance(updated);
+    await audit.record(
+      'CASH_ADVANCE_EDITED',
+      refId: id,
+      oldValue: _advanceValue(existing.amount, existing.date, existing.note),
+      newValue: _advanceValue(amount, cleanDate, cleanNote),
+    );
+    return updated;
+  }
+
+  String _advanceValue(int amount, String date, String note) =>
+      '$amount MMK on $date${note.isEmpty ? '' : ' | $note'}';
+
+  /// Deletes a cash advance and reverses its cash effect with a compensating
+  /// ledger entry, so the money history is never erased. The deletion itself is
+  /// kept in the audit log.
+  Future<void> deleteAdvance({
+    required String id,
+    required String byUserId,
+  }) async {
+    final existing = await cash.findAdvance(id);
+    if (existing == null) {
+      throw const NotFoundException('Cash advance not found');
+    }
+    final net = await cash.netFor(id);
+    if (net != 0) {
+      await cash.insertTxn(
+        type: CashTxnType.advance,
+        amount: -net,
+        refType: 'cash_advance',
+        refId: id,
+        date: existing.date,
+        note: existing.note.isEmpty
+            ? 'Cash advance deleted'
+            : 'Cash advance deleted: ${existing.note}',
+        createdBy: byUserId,
+      );
+    }
+    await cash.removeAdvance(id);
+    await audit.record(
+      'CASH_ADVANCE_DELETED',
+      refId: id,
+      oldValue: _advanceValue(existing.amount, existing.date, existing.note),
+    );
+  }
+
   /// Actual cash payment of an earned commission to the delivery man.
   Future<void> payCommission({
     required String recordId,

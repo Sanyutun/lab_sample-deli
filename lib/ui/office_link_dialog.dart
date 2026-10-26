@@ -1,6 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../core/office_link.dart';
+import 'scan_office_qr_screen.dart';
+
+/// Camera scanning is available where mobile_scanner has a platform plugin;
+/// the desktop office terminal types the address instead.
+bool _cameraScanSupported() =>
+    Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
 /// Asks where this terminal should keep its data: its own database, or another
 /// office terminal reached over the LAN.
@@ -24,8 +32,8 @@ Future<OfficeLink?> showOfficeLinkDialog(
           children: [
             const Text(
               'Enter the address and link key shown on the host terminal '
-              '(Companion Sync Server screen). Leave empty to use this '
-              'device\'s own database.',
+              '(Companion Sync Server screen), or scan its QR code. Leave '
+              'empty to use this device\'s own database.',
             ),
             const SizedBox(height: 16),
             TextField(
@@ -45,6 +53,36 @@ Future<OfficeLink?> showOfficeLinkDialog(
                 border: OutlineInputBorder(),
               ),
             ),
+            if (_cameraScanSupported()) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final scanned = await Navigator.of(ctx).push<OfficeLink>(
+                      MaterialPageRoute(
+                        builder: (_) => const ScanOfficeQrScreen(),
+                      ),
+                    );
+                    if (scanned == null || !ctx.mounted) return;
+                    urlController.text = scanned.url;
+                    if (scanned.key.isNotEmpty) {
+                      keyController.text = scanned.key;
+                    } else {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Address scanned — now enter the link key.',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan QR'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
