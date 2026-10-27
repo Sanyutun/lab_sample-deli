@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:googleapis_auth/auth_io.dart';
@@ -315,7 +316,9 @@ class GoogleSheetsService {
     required this.audit,
     required this.client,
     this.config = const GoogleSheetsConfig(),
-  });
+  }) {
+    _startHourlyBackup();
+  }
 
   final AppStorage storage;
   final CommissionRepository commissions;
@@ -323,6 +326,7 @@ class GoogleSheetsService {
   final AuditService audit;
   SheetsClient client;
   GoogleSheetsConfig config;
+  Timer? _hourlyBackupTimer;
 
   static const List<String> commissionHeaders = [
     'Transaction ID',
@@ -488,6 +492,23 @@ class GoogleSheetsService {
       newValue: '$restoredTables tables, $totalRows rows',
     );
     return RestoreResult(tables: restoredTables, rows: totalRows);
+  }
+
+  void _startHourlyBackup() {
+    _hourlyBackupTimer?.cancel();
+    _hourlyBackupTimer = Timer.periodic(const Duration(hours: 1), (_) async {
+      if (!config.isConfigured) return;
+      try {
+        await backupAll();
+      } catch (_) {
+        // Best effort hourly backup; ignore failures.
+      }
+    });
+  }
+
+  void dispose() {
+    _hourlyBackupTimer?.cancel();
+    _hourlyBackupTimer = null;
   }
 
   /// Secrets (Google Sheets credentials) are never uploaded, and are ignored if
