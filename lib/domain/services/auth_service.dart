@@ -75,4 +75,13 @@ class AuthService {
     final users = await _users.all();
     return users.any((u) => u.isAdmin && u.active && u.pin == clean);
   }
+
+  /// True when [pin] matches any active user (admin or staff). Used for
+  /// actions that allow staff approval.
+  Future<bool> verifyAnyPin(String pin) async {
+    final clean = pin.trim();
+    if (clean.isEmpty) return false;
+    final users = await _users.all();
+    return users.any((u) => u.active && u.pin == clean);
+  }
 }

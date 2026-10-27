@@ -332,7 +332,7 @@ class _CommissionHistoryScreenState extends State<CommissionHistoryScreen> {
       builder: (ctx) => _CorrectDialog(record: record, men: options),
     );
     if (result == null) return;
-    if (!await askAdminPin(
+    if (!await askStaffOrAdminPin(
       context,
       reason: 'Correct transaction ${record.barcode}?',
     )) {
@@ -370,7 +370,7 @@ class _CommissionHistoryScreenState extends State<CommissionHistoryScreen> {
   Future<void> _delete(CommissionRecord record) async {
     final reason = await deleteReasonDialog(context);
     if (reason == null) return;
-    if (!await askAdminPin(
+    if (!await askStaffOrAdminPin(
       context,
       reason: 'Delete transaction ${record.barcode}?',
     )) {

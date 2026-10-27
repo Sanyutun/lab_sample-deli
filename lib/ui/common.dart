@@ -389,6 +389,54 @@ Future<bool> askAdminPin(
   return ok;
 }
 
+Future<bool> askStaffOrAdminPin(
+  BuildContext context, {
+  required String reason,
+  String title = 'Approval needed',
+}) async {
+  final controller = TextEditingController();
+  final entered = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(reason),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Staff or Admin PIN',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (v) => Navigator.pop(ctx, v),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, controller.text),
+          child: const Text('Unlock'),
+        ),
+      ],
+    ),
+  );
+  if (entered == null || !context.mounted) return false;
+  final ok = await AppScope.of(context).auth.verifyAnyPin(entered);
+  if (!ok && context.mounted) {
+    showMessage(context, 'Wrong PIN', error: true);
+  }
+  return ok;
+}
+
 class SectionTitle extends StatelessWidget {
   const SectionTitle(this.text, {super.key});
   final String text;

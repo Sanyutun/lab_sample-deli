@@ -267,7 +267,7 @@ class _SelectDeliveryManScreenState extends State<SelectDeliveryManScreen> {
   /// Picks [man] for this receipt. A "require QR" man cannot be chosen by hand;
   /// an admin PIN unlocks the manual path.
   Future<void> _pick(DeliveryMan man) async {
-    if (man.requireQr && !await _askAdminPin(man)) return;
+    if (man.requireQr && !await _askStaffOrAdminPin(man)) return;
     if (!mounted) return;
     await Navigator.push(
       context,
@@ -281,12 +281,12 @@ class _SelectDeliveryManScreenState extends State<SelectDeliveryManScreen> {
     );
   }
 
-  Future<bool> _askAdminPin(DeliveryMan man) => askAdminPin(
+  Future<bool> _askStaffOrAdminPin(DeliveryMan man) => askStaffOrAdminPin(
     context,
     title: '${man.name} must be scanned',
     reason:
         'This delivery man is only picked by scanning their QR code. '
-        'To choose without scanning, enter an admin PIN.',
+        'To choose without scanning, enter a staff or admin PIN.',
   );
 
   @override
@@ -804,7 +804,7 @@ class _DeliverySuccessScreenState extends State<DeliverySuccessScreen> {
       )) {
         return;
       }
-    } else if (!await askAdminPin(
+    } else if (!await askStaffOrAdminPin(
       context,
       reason:
           'Take back the ${fmtMMK(reward.rewardAmount)} milestone '

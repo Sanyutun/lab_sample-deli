@@ -307,7 +307,7 @@ class _SuccessfulDeliveryScreenState extends State<SuccessfulDeliveryScreen> {
       )) {
         return false;
       }
-    } else if (!await askAdminPin(
+    } else if (!await askStaffOrAdminPin(
       context,
       reason:
           'Take back the ${fmtMMK(record.commission)} commission paid to $name?',
@@ -337,7 +337,7 @@ class _SuccessfulDeliveryScreenState extends State<SuccessfulDeliveryScreen> {
   Future<bool> _delete(CommissionRecord record) async {
     final reason = await deleteReasonDialog(context);
     if (reason == null) return false;
-    if (!await askAdminPin(
+    if (!await askStaffOrAdminPin(
       context,
       reason: 'Delete transaction ${record.barcode}?',
     )) {

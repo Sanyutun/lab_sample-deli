@@ -634,23 +634,6 @@ class _SheetsSyncScreenState extends State<SheetsSyncScreen> {
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'REPORTING SYNC (append-only)',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _busy ? null : () => _sync('commissions'),
-            icon: const Icon(Icons.table_chart),
-            label: const Text('SYNC COMMISSION RECORDS'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _busy ? null : () => _sync('reconciliation'),
-            icon: const Icon(Icons.compare_arrows),
-            label: const Text('SYNC RECONCILIATION RESULTS'),
-          ),
           if (_busy)
             const Padding(
               padding: EdgeInsets.only(top: 16),
