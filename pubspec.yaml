@@ -55,6 +55,8 @@ dependencies:
   # Both were already in the lock file transitively via path_provider_windows.
   ffi: ^2.1.0
   win32: ^6.4.0
+  image: ^4.3.0
+  flutter_zxing: ^1.8.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
