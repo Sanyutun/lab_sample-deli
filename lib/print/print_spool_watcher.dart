@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'emf_image_decoder.dart';
+
 /// One printed receipt: its invoice number plus the labelled fields the shop
 /// reads off it. A field is null when the job's text carried no such line.
 class PrintedInvoice {
@@ -64,6 +66,16 @@ class PrintInvoiceExtractor {
     if (invoice == null) {
       invoice = _findCode128Like(bytes);
     }
+    if (invoice == null) {
+      invoice = _aggressiveScan(bytes);
+    }
+    // If still null and it's EMF data, try image-based decoding (Windows only) - async but we need to handle
+    if (invoice == null && Platform.isWindows) {
+      if (bytes.length > 4 && bytes[0] == 0x01 && bytes[1] == 0x00 && bytes[2] == 0x00 && bytes[3] == 0x00) {
+        // Try to decode synchronously by running in microtask isn't possible here
+        // But we can store for async processing - for now mark for later
+      }
+    }
     if (invoice == null) return null;
     String? field(String label) =>
         _field(latin, label) ??
@@ -78,6 +90,74 @@ class PrintInvoiceExtractor {
       date: field('Date'),
       totalAmount: field('Total Amount'),
     );
+  }
+
+  /// Async version that can decode barcodes from EMF graphics
+  static Future<PrintedInvoice?> extractAsync(Uint8List bytes) async {
+    final syncResult = extract(bytes);
+    if (syncResult != null) return syncResult;
+    if (!Platform.isWindows) return null;
+    if (bytes.length > 4 && bytes[0] == 0x01 && bytes[1] == 0x00 && bytes[2] == 0x00 && bytes[3] == 0x00) {
+      try {
+        final decoded = await EmfImageDecoder.decodeBarcode(bytes);
+        if (decoded != null && decoded.isNotEmpty) {
+          final m = _pattern.firstMatch(decoded) ?? _pattern.firstMatch(decoded.toUpperCase());
+          final invoice = m?.group(0) ?? decoded.trim();
+          if (invoice.isNotEmpty) {
+            return PrintedInvoice(invoice: invoice);
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static String? _aggressiveScan(Uint8List bytes) {
+    // Try to find by sliding window over all byte permutations
+    final target = prefix.toLowerCase();
+    // Search in latin1
+    final latin = latin1.decode(bytes, allowInvalid: true).toLowerCase();
+    var idx = latin.indexOf(target);
+    if (idx >= 0) {
+      final sb = StringBuffer();
+      for (var i = idx; i < latin.length && sb.length < 12; i++) {
+        final c = latin.codeUnitAt(i);
+        if ((c >= 97 && c <= 122) || (c >= 48 && c <= 57)) {
+          sb.write(String.fromCharCode(c >= 97 && c <= 122 ? c - 32 : c));
+        } else {
+          break;
+        }
+      }
+      final res = sb.toString();
+      if (res.toLowerCase().startsWith(target)) return res;
+    }
+    // Search UTF-16LE chars
+    for (var i = 0; i < bytes.length - 20; i += 1) {
+      // Try to reconstruct if every other byte is 0
+      if (bytes[i + 1] == 0 || i + 10 < bytes.length && bytes[i + 3] == 0) {
+        final sb = StringBuffer();
+        var j = i;
+        while (j + 1 < bytes.length && sb.length < 12) {
+          final c = bytes[j];
+          if (bytes[j + 1] == 0) {
+            if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)) {
+              sb.writeCharCode(c >= 97 && c <= 122 ? c - 32 : c);
+              j += 2;
+              continue;
+            } else if (c == 0) {
+              break;
+            } else {
+              break;
+            }
+          } else {
+            break;
+          }
+        }
+        final res = sb.toString();
+        if (res.length >= 6 && res.toLowerCase().startsWith(target)) return res;
+      }
+    }
+    return null;
   }
 
   /// Try to find a Code 128 barcode string (our invoice format) by scanning
@@ -459,7 +539,11 @@ class PrintSpoolWatcher {
     } on FileSystemException {
       return; // locked or gone; retry on the next scan
     }
-    final printed = PrintInvoiceExtractor.extract(bytes);
+    var printed = PrintInvoiceExtractor.extract(bytes);
+    if (printed == null && Platform.isWindows) {
+      // Try async EMF image decode
+      printed = await PrintInvoiceExtractor.extractAsync(bytes);
+    }
     // The invoice already emitted under this path means the spooler is still
     // writing the same job. A different invoice means the spooler recycled the
     // file name for a new job — emit it.
